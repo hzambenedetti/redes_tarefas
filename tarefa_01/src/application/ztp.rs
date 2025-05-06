@@ -6,13 +6,29 @@ pub struct ZTPRequest{
     pub resource: String,
 }
 
+impl ZTPRequest{
+    pub fn new(code: ZTPRequestCode, resource: String) -> ZTPRequest{
+        ZTPRequest{
+            code,
+            resource
+        }
+    }
+}
 
 #[derive(Encode, Decode)]
 pub struct ZTPResponse{
   code: ZTPResponseCode,
-  data: ZTPResponseData,
+  data: Option<ZTPResponseData>,
 }
 
+impl ZTPResponse{
+    pub fn new (code: ZTPResponseCode, data: Option<ZTPResponseData>) -> ZTPResponse{
+        ZTPResponse{
+            code,
+            data
+        }
+    }
+}
 
 #[derive(Encode, Decode)]
 pub enum ZTPRequestCode{
@@ -32,14 +48,23 @@ pub enum ZTPResponseCode{
 #[derive(Encode, Decode)]
 pub enum ZTPResponseData{
     Bytes(Vec<u8>),
-    Metadata(Metadata),
-    PackageIndex(usize),
+    Metadata(ZTPMetadata),
+    PackageIndex(usize)
 }
 
 
 #[derive(Encode, Decode)]
-pub struct Metadata{
+pub struct ZTPMetadata{
     size: usize,
     package_count: usize,
+}
+
+impl ZTPMetadata{
+    pub fn new(size: usize, package_count: usize) -> ZTPMetadata{
+        ZTPMetadata{
+            size,
+            package_count
+        }
+    }
 }
 
