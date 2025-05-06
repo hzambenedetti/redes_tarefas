@@ -3,6 +3,7 @@ use std::{
 };
 
 use crate::constants::*;
+use crate::application::ztp;
 
 mod thread_pool;
 
@@ -84,7 +85,7 @@ fn handle_connection(
         }
         let metadata = format!("bytes={}", res_buff.len()); 
         send_metadata(&socket, &addr, &metadata);
-        send_resource(&socket, &res_buff);
+        send_resource(&socket, &addr, &res_buff);
         send_end_of_req(&socket, &addr);
     }
 
@@ -158,13 +159,17 @@ fn send_metadata(
 
 fn send_resource(
     socket: &Arc<Mutex<UdpSocket>>,
+    addr: &str,
     res_buff: &[u8],
 ){
-
+   for data_piece in res_buff.iter().step_by(DATA_PIECE_SIZE){
+         
+   }
 }
 
 fn send_data_piece(
     socket: &Arc<Mutex<UdpSocket>>,
+    addr: &str,
     buff: &[u8],
 ){
 
