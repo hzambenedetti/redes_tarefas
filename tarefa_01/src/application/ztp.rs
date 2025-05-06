@@ -1,5 +1,7 @@
 use bincode::{Encode, Decode};
 
+use crate::constants::DATA_PIECE_SIZE;
+
 #[derive(Encode, Decode)]
 pub struct ZTPRequest{
     pub code: ZTPRequestCode,
@@ -28,6 +30,17 @@ impl ZTPResponse{
             data
         }
     }
+
+    pub fn get_code(&self) -> ZTPResponseCode{
+        self.code
+    }
+
+    pub fn is_ack(&self) -> bool{
+        match self.code{
+            ZTPResponseCode::Ack => true,
+            _ => false
+        }
+    }
 }
 
 #[derive(Encode, Decode)]
@@ -36,7 +49,7 @@ pub enum ZTPRequestCode{
     Post,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Clone, Copy)]
 pub enum ZTPResponseCode{
     Data,
     Metadata,
@@ -65,6 +78,32 @@ impl ZTPMetadata{
             size,
             package_count
         }
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> ZTPMetadata{
+        let package_count;
+        if bytes.len() <= DATA_PIECE_SIZE{
+            package_count = 1;
+        }
+        else if bytes.len() % DATA_PIECE_SIZE == 0{
+            package_count = bytes.len()/DATA_PIECE_SIZE;
+        }
+        else{
+            package_count = bytes.len()/DATA_PIECE_SIZE + 1;
+        }
+        
+        ZTPMetadata{
+            size: bytes.len(),
+            package_count
+        }
+    }
+
+    pub fn size(&self) -> usize{
+        self.size
+    }
+
+    pub fn count(&self) -> usize{
+        self.package_count
     }
 }
 

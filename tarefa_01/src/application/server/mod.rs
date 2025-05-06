@@ -5,6 +5,8 @@ use std::{
 use crate::constants::*;
 use crate::application::ztp;
 
+use super::ztp::{ZTPMetadata, ZTPResponse, ZTPResponseCode, ZTPResponseData};
+
 mod thread_pool;
 
 /*================================================= SERVER ============================================================= */
@@ -162,9 +164,57 @@ fn send_resource(
     addr: &str,
     res_buff: &[u8],
 ){
-   for data_piece in res_buff.iter().step_by(DATA_PIECE_SIZE){
-         
-   }
+    let size = res_buff.len();
+    
+    let mut tx_buffer: [u8; 4096] = [0; 4096];
+    let mut rx_buffer: [u8; 4096] = [0; 4096];
+    let mut start = 0;
+    while start <= size{
+        let end = size.min(start + DATA_PIECE_SIZE);
+
+        let response = ZTPResponse::new(
+            ztp::ZTPResponseCode::Data, 
+            Some(ZTPResponseData::Bytes(res_buff[start..end].to_vec())),
+        );
+
+        let res_size = bincode::encode_into_slice(
+            response,
+            &mut tx_buffer,
+            bincode::config::standard()
+        ).unwrap();
+
+        let mut tries = 0;
+        let mut package_finished = false;
+        while !package_finished{ 
+            send_data_piece(socket, addr, &tx_buffer[..res_size]);
+            thread::sleep(Duration::from_millis(TTL_MILLIS));
+            
+            let is_ack;
+            if let Some(res) = get_response(socket,addr, &mut rx_buffer){
+                is_ack = res.is_ack(); 
+            } else{
+                is_ack = false;
+            }
+
+            package_finished = tries >= 10 || is_ack;
+            tries += 1;
+        }
+
+        if tries >= 10 {return;}
+        
+        start += DATA_PIECE_SIZE;
+    }
+
+    let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None);
+
+    let end_of_req_size = bincode::encode_into_slice(
+        end_of_req,
+        &mut tx_buffer,
+        bincode::config::standard(),
+    ).unwrap();
+
+    send_data_piece(socket, addr, &tx_buffer[..end_of_req_size]);
+
 }
 
 fn send_data_piece(
@@ -172,5 +222,27 @@ fn send_data_piece(
     addr: &str,
     buff: &[u8],
 ){
+    let locked_socket = socket.lock().unwrap();
+    locked_socket.send_to(buff, addr);
+}
+
+fn get_response(
+    socket: &Arc<Mutex<UdpSocket>>,
+    addr: &str,
+    rx_buff: &mut [u8],
+) -> Option<ZTPResponse>{ 
+    let locked_socket = socket.lock().unwrap();
+    locked_socket.connect(addr);
+    match locked_socket.recv(rx_buff){
+        Ok(bytes) =>{
+            let response: ZTPResponse = bincode::decode_from_slice(
+                &rx_buff[..bytes],
+                bincode::config::standard()
+            ).unwrap().0;
+
+            Some(response)
+        },
+        Err(_) => None
+    }
 
 }
