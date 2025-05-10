@@ -46,6 +46,24 @@ impl ZTPResponse{
             _ => false
         }
     }
+    
+    pub fn get_bytes(&self) -> Option<&[u8]>{
+        if self.data.is_none() {return None};
+        
+        if let ZTPResponseData::Bytes(vec_ref) = self.data.as_ref().unwrap(){
+            return Some(vec_ref);
+        }
+        None
+    }
+
+    pub fn has_data(&self) -> bool{
+        return self.data.is_some();
+    }
+
+    pub fn get_data(&self) -> Option<&ZTPResponseData>{
+        return self.data.as_ref();
+    }
+
 }
 
 #[derive(Encode, Decode)]
@@ -54,7 +72,7 @@ pub enum ZTPRequestCode{
     Post,
 }
 
-#[derive(Encode, Decode, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy, PartialEq)]
 pub enum ZTPResponseCode{
     Data,
     Metadata,
@@ -72,7 +90,7 @@ pub enum ZTPResponseData{
 }
 
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Clone, Copy)]
 pub struct ZTPMetadata{
     size: usize,
     package_count: usize,
