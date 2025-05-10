@@ -2,7 +2,7 @@ use bincode::{Encode, Decode};
 
 use crate::constants::DATA_PIECE_SIZE;
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Debug)]
 pub struct ZTPRequest{
     pub code: ZTPRequestCode,
     pub resource: String,
@@ -22,7 +22,7 @@ impl ZTPRequest{
 }
 
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Debug)]
 pub struct ZTPResponse{
   code: ZTPResponseCode,
   data: Option<ZTPResponseData>,
@@ -66,13 +66,13 @@ impl ZTPResponse{
 
 }
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Debug)]
 pub enum ZTPRequestCode{
     Get,
     Post,
 }
 
-#[derive(Encode, Decode, Clone, Copy, PartialEq)]
+#[derive(Encode, Decode, Clone, Copy, PartialEq, Debug)]
 pub enum ZTPResponseCode{
     Data,
     Metadata,
@@ -82,7 +82,7 @@ pub enum ZTPResponseCode{
     NotFound,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Debug)]
 pub enum ZTPResponseData{
     Bytes(Vec<u8>),
     Metadata(ZTPMetadata),
@@ -90,7 +90,7 @@ pub enum ZTPResponseData{
 }
 
 
-#[derive(Encode, Decode, Clone, Copy)]
+#[derive(Encode, Decode, Clone, Copy, Debug)]
 pub struct ZTPMetadata{
     size: usize,
     package_count: usize,

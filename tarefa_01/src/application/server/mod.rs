@@ -69,17 +69,27 @@ fn handle_connection(
     let mut end_request = false;
     let mut rx_buff: [u8; 4096] = [0; 4096];
 
+    println!("Draning Socket for addr: {addr}");
+
     while !end_request{
         while peek_request(&socket, &addr, &mut rx_buff).is_err(){}
         
         let bytes = get_request(&socket, &addr, &mut rx_buff).unwrap();
 
-        let req = parse_request(&rx_buff[..bytes]).unwrap();
+        let req = parse_request(&rx_buff[..bytes]);
+        if req.is_none(){
+            end_request = true;
+            continue;
+        }
+        let req = req.unwrap();
 
+        // drain_socket(&socket, &addr);
+        println!("Client requested {}", req.get_resource());
         let res_buff;
         match get_resource(req.get_resource()){
             Ok(buff)  => {res_buff = buff;},
             Err(_) =>{
+                println!("Resource does not exist!");
                 send_not_found(&socket, &addr);
                 end_request = true;
                 continue;
@@ -90,12 +100,18 @@ fn handle_connection(
             Some(ZTPResponseData::Metadata(
                 ZTPMetadata::from_bytes(&res_buff)
             ))
-        ); 
+        );
+        println!("Sending Metadata to {addr}");
+        dbg!(&metadata);
         send_metadata(&socket, &addr, metadata);
+        println!("Sending Resource to {addr}");
         send_resource(&socket, &addr, &res_buff);
         end_request = true;
     }
+    println!("Sending EOR to {addr}");
     send_end_of_req(&socket, &addr);
+    thread::sleep(Duration::from_millis(TTL_MILLIS));
+    drain_socket(&socket, &addr);
 
     println!("Finishing job for address {addr}");
     sender.lock().unwrap().send(addr).unwrap();
@@ -110,7 +126,8 @@ fn parse_request(buffer: &[u8]) -> Option<ZTPRequest>{
 
 fn get_request(socket: &Arc<Mutex<UdpSocket>>, addr: &str, buffer: &mut[u8]) -> Result<usize, Error>{
     let locked_socket = socket.lock().unwrap();
-    locked_socket.send_to(buffer, addr)
+    locked_socket.connect(addr).unwrap();
+    locked_socket.recv(buffer)
 }
 
 fn peek_request(socket: &Arc<Mutex<UdpSocket>>, addr: &str, buffer: &mut[u8]) -> Result<usize, Error>{
@@ -151,7 +168,7 @@ fn send_metadata(
     metadata: ZTPResponse 
 ) -> bool{
     let mut tx_buff: [u8; 2048] = [0; 2048];
-    let mut rx_buff: [u8; 1024] = [0; 1024];
+    let mut rx_buff: [u8; 4096] = [0; 4096];
     let bytes = bincode::encode_into_slice(
         metadata, 
         &mut tx_buff, 
@@ -160,15 +177,20 @@ fn send_metadata(
 
     let locked_socket = socket.lock().unwrap();
     locked_socket.send_to(&tx_buff[..bytes], addr).unwrap();
+    drop(locked_socket);
+    println!("Sent Metadata, Waiting for ACK...");
 
     let mut tries = 0;
     while peek_request(socket, addr, &mut rx_buff).is_err(){
+        println!("Waiting, try {tries}");
         thread::sleep(Duration::from_millis(TTL_MILLIS));
         tries += 1;
         if tries > MAX_RETRIES{
             return false;
         }
     }
+    println!("Metadata ACK received!");
+    let response = get_response(socket, addr, &mut rx_buff);
     return true;
 }
 
@@ -178,7 +200,8 @@ fn send_resource(
     res_buff: &[u8],
 ){
     let size = res_buff.len();
-    
+    println!("Resource Size: {size}");
+        
     let mut tx_buffer: [u8; 4096] = [0; 4096];
     let mut rx_buffer: [u8; 4096] = [0; 4096];
     let mut start = 0;
@@ -198,12 +221,15 @@ fn send_resource(
 
         let mut tries = 0;
         let mut package_finished = false;
-        while !package_finished{ 
+        while !package_finished{
+            println!("Sending Data Piece to {addr}, start: {start}, try = {tries}");
+            println!("Sending {res_size} bytes");
             send_data_piece(socket, addr, &tx_buffer[..res_size]);
             thread::sleep(Duration::from_millis(TTL_MILLIS));
             
             let is_ack;
             if let Some(res) = get_response(socket,addr, &mut rx_buffer){
+                println!("Received Response from {addr}");
                 is_ack = res.is_ack(); 
             } else{
                 is_ack = false;
@@ -248,6 +274,8 @@ fn get_response(
     locked_socket.connect(addr);
     match locked_socket.recv(rx_buff){
         Ok(bytes) =>{
+            println!("Received {bytes} bytes");
+            println!("Received bytes (hex): {:02x?}", &rx_buff[..bytes]);
             let response: ZTPResponse = bincode::decode_from_slice(
                 &rx_buff[..bytes],
                 bincode::config::standard()
@@ -258,4 +286,19 @@ fn get_response(
         Err(_) => None
     }
 
+}
+
+fn drain_socket(
+    socket: &Arc<Mutex<UdpSocket>>,
+    addr: &str,
+){
+    let mut drain_buff = [0u8; 4096];
+    let locked_socket = socket.lock().unwrap();
+    locked_socket.connect(addr).unwrap();
+
+    while let Ok(bytes) = locked_socket.recv(&mut drain_buff){
+        println!("Received bytes (hex): {:02x?}", &drain_buff[..bytes]);
+    }
+    
+    println!("Finished Draining Socket");
 }

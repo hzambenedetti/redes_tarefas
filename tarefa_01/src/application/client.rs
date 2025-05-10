@@ -4,7 +4,7 @@ use crate::constants::*;
 use bincode::config;
 
 use super::ztp::{
-    ZTPMetadata, ZTPResponse, ZTPResponseCode, ZTPResponseData
+    ZTPMetadata, ZTPRequest, ZTPRequestCode, ZTPResponse, ZTPResponseCode, ZTPResponseData
 };
 
 pub struct Client;
@@ -20,20 +20,38 @@ impl Client{
         let socket = UdpSocket::bind(CLIENT_ADDRESS).expect("Failed initialize Client");
         socket.connect(SERVER_ADDRESS).unwrap();
         socket.set_nonblocking(true).unwrap();
+        
+        send_request(&socket);
+        println!("Sent GET request to {SERVER_ADDRESS}");
 
         let metadata = receive_metadata(&socket);
-        if metadata.is_none() {return}
+        if metadata.is_none() {
+            println!("Connection Timeout: Metadata did not arrive");
+            return;
+        }
+        dbg!(&metadata);
 
         let resource = receive_resource(&socket, metadata.unwrap());
-        if resource.is_none() {return}
+        if resource.is_none() {
+            println!("Connection Timeout: Resource did not arrive");
+            return;
+        }
         let save_path = format!("{CLIENT_DIR_PATH}/{RES_NAME}");
         
-        fs::write(&save_path, &resource.unwrap());
+        println!("Saving Resource to: {save_path}");
+        fs::write(&save_path, &resource.unwrap()).unwrap();
     }
+}
+
+fn send_request(socket: &UdpSocket){
+    let req = ZTPRequest::new(ZTPRequestCode::Get, RES_NAME.to_string());
+    let bytes = bincode::encode_to_vec(req, config::standard()).unwrap();
+    socket.send(&bytes).unwrap();
 }
 
 fn receive_metadata(socket: &UdpSocket) -> Option<ZTPMetadata>{
     let mut rx_buff = [0u8; 4096];
+    let mut tx_buff = [0u8; 4096];
     let mut tries = 0;
 
     while tries <= MAX_RETRIES{
@@ -45,6 +63,7 @@ fn receive_metadata(socket: &UdpSocket) -> Option<ZTPMetadata>{
         
         let bytes = socket.recv(&mut rx_buff).unwrap();
         if let Some(res) =  parse_response(&rx_buff[..bytes]){
+            send_ack(socket, &mut tx_buff);
             return extract_metadata(res);
         }
     }
@@ -58,8 +77,10 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
     let mut res_buff = Vec::with_capacity(metadata.size()); 
     let mut tries: usize = 0;
     let mut res_code = ZTPResponseCode::Data;
-
-    while res_code == ZTPResponseCode::EndRequest{
+    
+    println!("Receiving resource");
+    while res_code != ZTPResponseCode::EndRequest{
+    println!("Try {tries}");
         thread::sleep(Duration::from_millis(TTL_MILLIS));
         tries += 1;
 
@@ -67,6 +88,7 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
             if tries > MAX_RETRIES { return None}
             continue;
         }
+        tries = 0;
 
         let bytes = socket.recv(&mut rx_buff).unwrap();
         
@@ -75,6 +97,8 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
             if res_code == ZTPResponseCode::Data{
                 let data = response.get_bytes().unwrap();
                 copy_data(&mut res_buff, data);
+                println!("Received {} bytes from {SERVER_ADDRESS}", data.len());
+                println!("Total Received: {}", res_buff.len());
                 send_ack(socket, &mut tx_buff);
             }
         }
@@ -100,7 +124,9 @@ fn send_ack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
         ZTPResponseCode::Ack,
         None
     );
+    println!("Sending ACK");
     let bytes = bincode::encode_into_slice(ack, tx_buff, config::standard()).unwrap();
+    println!("Sending bytes (hex): {:02x?}", &tx_buff[..bytes]);
     socket.send(&tx_buff[..bytes]).unwrap()
 }
 
