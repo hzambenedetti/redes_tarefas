@@ -15,7 +15,12 @@ impl ZTPRequest{
             resource
         }
     }
+
+    pub fn get_resource(&self) -> &str{
+        return self.resource.as_str();
+    }
 }
+
 
 #[derive(Encode, Decode)]
 pub struct ZTPResponse{
@@ -56,6 +61,7 @@ pub enum ZTPResponseCode{
     EndRequest,
     Ack,
     Nack,
+    NotFound,
 }
 
 #[derive(Encode, Decode)]

@@ -5,7 +5,7 @@ use std::{
 use crate::constants::*;
 use crate::application::ztp;
 
-use super::ztp::{ZTPMetadata, ZTPResponse, ZTPResponseCode, ZTPResponseData};
+use super::ztp::{ZTPMetadata, ZTPResponse, ZTPResponseCode, ZTPResponseData, ZTPRequest};
 
 mod thread_pool;
 
@@ -74,36 +74,38 @@ fn handle_connection(
         
         let bytes = get_request(&socket, &addr, &mut rx_buff).unwrap();
 
-        let (_, resource_name) = parse_request(&rx_buff[..bytes]);
+        let req = parse_request(&rx_buff[..bytes]).unwrap();
 
         let res_buff;
-        match get_resource(&resource_name){
+        match get_resource(req.get_resource()){
             Ok(buff)  => {res_buff = buff;},
             Err(_) =>{
-                send_not_found(&socket, &addr, &resource_name);
+                send_not_found(&socket, &addr);
                 end_request = true;
                 continue;
             }
         }
-        let metadata = format!("bytes={}", res_buff.len()); 
-        send_metadata(&socket, &addr, &metadata);
+        let metadata = ZTPResponse::new(
+            ZTPResponseCode::Metadata,
+            Some(ZTPResponseData::Metadata(
+                ZTPMetadata::from_bytes(&res_buff)
+            ))
+        ); 
+        send_metadata(&socket, &addr, metadata);
         send_resource(&socket, &addr, &res_buff);
-        send_end_of_req(&socket, &addr);
+        end_request = true;
     }
+    send_end_of_req(&socket, &addr);
 
     println!("Finishing job for address {addr}");
     sender.lock().unwrap().send(addr).unwrap();
 }
 
-fn parse_request(buffer: &[u8]) -> (String, String){
-    let req_str = String::from_utf8_lossy(buffer);
-
-    if let Some((method, resource)) = req_str.split_once(' '){
-        return (method.to_string(), resource.to_string());
+fn parse_request(buffer: &[u8]) -> Option<ZTPRequest>{
+    if let Ok(req) = bincode::decode_from_slice(&buffer, bincode::config::standard()){
+       return Some(req.0); 
     }
-
-    (String::from(""), String::from(""))
-
+    None
 }
 
 fn get_request(socket: &Arc<Mutex<UdpSocket>>, addr: &str, buffer: &mut[u8]) -> Result<usize, Error>{
@@ -122,31 +124,42 @@ fn get_resource(resource_name: &str) -> Result<Vec<u8>, Error>{
     fs::read(&path)
 }
 
-fn send_not_found(socket: &Arc<Mutex<UdpSocket>>, addr: &str ,res: &str) -> usize{
-    let msg_str = format!("NOT_FOUND {res}");
-    let msg_buff = msg_str.as_bytes();
+fn send_not_found(socket: &Arc<Mutex<UdpSocket>>, addr: &str) -> usize{
+    let not_found_res = ZTPResponse::new(ZTPResponseCode::NotFound, None);
+    let vec = bincode::encode_to_vec(
+        not_found_res,
+        bincode::config::standard()
+    ).unwrap();
 
-    socket.lock().unwrap().send_to(msg_buff, addr).unwrap()
+    socket.lock().unwrap().send_to(&vec, addr).unwrap()
 }
 
 fn send_end_of_req(socket: &Arc<Mutex<UdpSocket>>, addr: &str) -> usize{
-    let msg_bytes = "END_REQUEST".as_bytes();
-    let locked_socket = socket.lock().unwrap();
+    let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None);
+    let vec = bincode::encode_to_vec(
+        end_of_req, 
+        bincode::config::standard() 
+    ).unwrap();
 
-    locked_socket.send_to(msg_bytes, addr).unwrap()
+    let locked_socket = socket.lock().unwrap();
+    locked_socket.send_to(&vec, addr).unwrap()
 }
 
 fn send_metadata(
     socket: &Arc<Mutex<UdpSocket>>,
     addr: &str,
-    metadata: &str 
+    metadata: ZTPResponse 
 ) -> bool{
-    let msg_str = format!("METADATA {metadata}");
-    let msg_bytes = msg_str.as_bytes();
+    let mut tx_buff: [u8; 2048] = [0; 2048];
     let mut rx_buff: [u8; 1024] = [0; 1024];
+    let bytes = bincode::encode_into_slice(
+        metadata, 
+        &mut tx_buff, 
+        bincode::config::standard()
+    ).unwrap();
 
     let locked_socket = socket.lock().unwrap();
-    locked_socket.send_to(msg_bytes, addr).unwrap();
+    locked_socket.send_to(&tx_buff[..bytes], addr).unwrap();
 
     let mut tries = 0;
     while peek_request(socket, addr, &mut rx_buff).is_err(){
