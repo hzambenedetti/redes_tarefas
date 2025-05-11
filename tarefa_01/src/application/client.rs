@@ -1,8 +1,6 @@
 use std::{fs, net::UdpSocket, thread, time::Duration}; 
 use crate::constants::*;
 
-use bincode::config;
-
 use super::ztp::{
     ZTPMetadata, ZTPRequest, ZTPRequestCode, ZTPResponse, ZTPResponseCode, ZTPResponseData
 };
@@ -45,7 +43,7 @@ impl Client{
 
 fn send_request(socket: &UdpSocket){
     let req = ZTPRequest::new(ZTPRequestCode::Get, RES_NAME.to_string());
-    let bytes = bincode::encode_to_vec(req, config::standard()).unwrap();
+    let bytes = ZTPRequest::encode_to_vec(req);
     socket.send(&bytes).unwrap();
 }
 
@@ -113,7 +111,7 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
 fn parse_response(
     buffer: &[u8]
 ) -> Option<ZTPResponse>{
-    if let Ok(res) = bincode::decode_from_slice(buffer, bincode::config::standard()){
+    if let Ok(res) = ZTPResponse::decode_from_slice(buffer){
         return Some(res.0);
     }
     None
@@ -122,10 +120,11 @@ fn parse_response(
 fn send_ack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
     let ack = ZTPResponse::new(
         ZTPResponseCode::Ack,
+        None,
         None
     );
     println!("Sending ACK");
-    let bytes = bincode::encode_into_slice(ack, tx_buff, config::standard()).unwrap();
+    let bytes = ZTPResponse::encode_into_slice(ack, tx_buff).unwrap();
     println!("Sending bytes (hex): {:02x?}", &tx_buff[..bytes]);
     socket.send(&tx_buff[..bytes]).unwrap()
 }
@@ -134,9 +133,10 @@ fn send_ack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
 fn send_nack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
     let nack = ZTPResponse::new(
         ZTPResponseCode::Nack,
+        None,
         None
     );
-    let bytes = bincode::encode_into_slice(nack, tx_buff, config::standard()).unwrap();
+    let bytes = ZTPResponse::encode_into_slice(nack, tx_buff).unwrap();
     socket.send(&tx_buff[..bytes]).unwrap()
 }
 

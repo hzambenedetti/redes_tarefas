@@ -1,6 +1,10 @@
-use bincode::{Encode, Decode};
+use bincode::{Encode, Decode, config, error::{EncodeError, DecodeError}};
+use xxhash_rust::xxh3;
 
 use crate::constants::DATA_PIECE_SIZE;
+
+
+/* ============================================================ ZTP REQUEST ============================================================ */
 
 #[derive(Encode, Decode, Debug)]
 pub struct ZTPRequest{
@@ -19,20 +23,48 @@ impl ZTPRequest{
     pub fn get_resource(&self) -> &str{
         return self.resource.as_str();
     }
+
+    pub fn encode_to_vec(self) -> Vec<u8>{
+       bincode::encode_to_vec(self, config::standard()).unwrap() 
+    }
+
+    pub fn encode_into_slice(self, buffer: &mut[u8]) -> Result<usize, EncodeError>{
+        bincode::encode_into_slice(self, buffer, config::standard())
+    }
+    
+    pub fn decode_from_slice(buffer: &[u8]) -> Result<(ZTPRequest, usize), DecodeError>{
+        bincode::decode_from_slice(buffer, config::standard())
+    }
+
 }
 
+#[derive(Encode, Decode, Debug)]
+pub enum ZTPRequestCode{
+    Get,
+    Post,
+}
+
+/* ============================================================ ZTP REQUEST ============================================================ */
 
 #[derive(Encode, Decode, Debug)]
 pub struct ZTPResponse{
   code: ZTPResponseCode,
   data: Option<ZTPResponseData>,
+  hash: Option<u64>,
+  pkg_id: Option<u64>,
 }
 
 impl ZTPResponse{
-    pub fn new (code: ZTPResponseCode, data: Option<ZTPResponseData>) -> ZTPResponse{
+    pub fn new (code: ZTPResponseCode, data: Option<ZTPResponseData>, id: Option<u64>) -> ZTPResponse{
+        let mut hash = None;
+        if let Some(ZTPResponseData::Bytes(bytes_ref)) = data.as_ref(){
+           hash = Some(xxh3::xxh3_64(&bytes_ref)); 
+        }
         ZTPResponse{
             code,
-            data
+            data,
+            hash,
+            pkg_id: id
         }
     }
 
@@ -64,13 +96,28 @@ impl ZTPResponse{
         return self.data.as_ref();
     }
 
+    pub fn get_hash(&self) -> Option<u64>{
+        self.hash
+    }
+
+    pub fn get_pkg_id(&self) -> Option<u64>{
+        self.pkg_id
+    } 
+    
+    pub fn encode_into_slice(self, buffer: &mut[u8]) -> Result<usize, EncodeError>{
+        bincode::encode_into_slice(self, buffer, config::standard())
+    }
+    
+    pub fn encode_to_vec(self) -> Result<Vec<u8>, EncodeError>{
+        bincode::encode_to_vec(self, config::standard())
+    }
+    
+    pub fn decode_from_slice(buffer: &[u8]) -> Result<(ZTPResponse, usize), DecodeError>{
+        bincode::decode_from_slice(buffer, config::standard())
+    }
+
 }
 
-#[derive(Encode, Decode, Debug)]
-pub enum ZTPRequestCode{
-    Get,
-    Post,
-}
 
 #[derive(Encode, Decode, Clone, Copy, PartialEq, Debug)]
 pub enum ZTPResponseCode{

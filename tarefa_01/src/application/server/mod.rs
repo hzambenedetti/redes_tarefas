@@ -99,7 +99,8 @@ fn handle_connection(
             ZTPResponseCode::Metadata,
             Some(ZTPResponseData::Metadata(
                 ZTPMetadata::from_bytes(&res_buff)
-            ))
+            )),
+            None
         );
         println!("Sending Metadata to {addr}");
         dbg!(&metadata);
@@ -118,7 +119,7 @@ fn handle_connection(
 }
 
 fn parse_request(buffer: &[u8]) -> Option<ZTPRequest>{
-    if let Ok(req) = bincode::decode_from_slice(&buffer, bincode::config::standard()){
+    if let Ok(req) = ZTPRequest::decode_from_slice(buffer){
        return Some(req.0); 
     }
     None
@@ -142,20 +143,18 @@ fn get_resource(resource_name: &str) -> Result<Vec<u8>, Error>{
 }
 
 fn send_not_found(socket: &Arc<Mutex<UdpSocket>>, addr: &str) -> usize{
-    let not_found_res = ZTPResponse::new(ZTPResponseCode::NotFound, None);
-    let vec = bincode::encode_to_vec(
+    let not_found_res = ZTPResponse::new(ZTPResponseCode::NotFound, None, None);
+    let vec = ZTPResponse::encode_to_vec(
         not_found_res,
-        bincode::config::standard()
     ).unwrap();
 
     socket.lock().unwrap().send_to(&vec, addr).unwrap()
 }
 
 fn send_end_of_req(socket: &Arc<Mutex<UdpSocket>>, addr: &str) -> usize{
-    let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None);
-    let vec = bincode::encode_to_vec(
+    let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None, None);
+    let vec = ZTPResponse::encode_to_vec(
         end_of_req, 
-        bincode::config::standard() 
     ).unwrap();
 
     let locked_socket = socket.lock().unwrap();
@@ -169,10 +168,9 @@ fn send_metadata(
 ) -> bool{
     let mut tx_buff: [u8; 2048] = [0; 2048];
     let mut rx_buff: [u8; 4096] = [0; 4096];
-    let bytes = bincode::encode_into_slice(
+    let bytes = ZTPResponse::encode_into_slice(
         metadata, 
         &mut tx_buff, 
-        bincode::config::standard()
     ).unwrap();
 
     let locked_socket = socket.lock().unwrap();
@@ -211,12 +209,12 @@ fn send_resource(
         let response = ZTPResponse::new(
             ztp::ZTPResponseCode::Data, 
             Some(ZTPResponseData::Bytes(res_buff[start..end].to_vec())),
+            Some(0),
         );
 
-        let res_size = bincode::encode_into_slice(
+        let res_size = ZTPResponse::encode_into_slice(
             response,
             &mut tx_buffer,
-            bincode::config::standard()
         ).unwrap();
 
         let mut tries = 0;
@@ -244,12 +242,11 @@ fn send_resource(
         start += DATA_PIECE_SIZE;
     }
 
-    let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None);
+    let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None, None);
 
-    let end_of_req_size = bincode::encode_into_slice(
+    let end_of_req_size = ZTPResponse::encode_into_slice(
         end_of_req,
         &mut tx_buffer,
-        bincode::config::standard(),
     ).unwrap();
 
     send_data_piece(socket, addr, &tx_buffer[..end_of_req_size]);
@@ -276,9 +273,8 @@ fn get_response(
         Ok(bytes) =>{
             println!("Received {bytes} bytes");
             println!("Received bytes (hex): {:02x?}", &rx_buff[..bytes]);
-            let response: ZTPResponse = bincode::decode_from_slice(
+            let response: ZTPResponse = ZTPResponse::decode_from_slice(
                 &rx_buff[..bytes],
-                bincode::config::standard()
             ).unwrap().0;
 
             Some(response)
