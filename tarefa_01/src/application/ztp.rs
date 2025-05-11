@@ -116,6 +116,14 @@ impl ZTPResponse{
         bincode::decode_from_slice(buffer, config::standard())
     }
 
+    pub fn hash_and_cmp(&self) -> Option<bool>{
+        if let Some(ZTPResponseData::Bytes(vec_ref)) = self.data.as_ref(){
+            let hash_result = xxh3::xxh3_64(vec_ref);
+            return Some(hash_result == self.hash.unwrap())
+        }
+        None
+    }
+
 }
 
 

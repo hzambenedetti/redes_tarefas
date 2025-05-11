@@ -1,4 +1,6 @@
 use std::{fs, net::UdpSocket, thread, time::Duration}; 
+use xxhash_rust::xxh3;
+
 use crate::constants::*;
 
 use super::ztp::{
@@ -94,10 +96,18 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
             res_code = response.get_code();
             if res_code == ZTPResponseCode::Data{
                 let data = response.get_bytes().unwrap();
-                copy_data(&mut res_buff, data);
-                println!("Received {} bytes from {SERVER_ADDRESS}", data.len());
-                println!("Total Received: {}", res_buff.len());
-                send_ack(socket, &mut tx_buff);
+                let hash_result = xxh3::xxh3_64(data);
+                let incoming_hash = response.get_hash().unwrap();
+                println!("Incoming Hash: {incoming_hash}; Calculated Hash: {hash_result}");
+                if hash_result == incoming_hash{
+                    copy_data(&mut res_buff, data);
+                    println!("Received {} bytes from {SERVER_ADDRESS}", data.len());
+                    println!("Total Received: {}", res_buff.len());
+                    send_ack(socket, &mut tx_buff);
+                }
+                else{
+                    send_nack(socket, &mut tx_buff);
+                }
             }
         }
         else{
