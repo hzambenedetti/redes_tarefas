@@ -1,5 +1,6 @@
 use std::{fs, net::UdpSocket, thread, time::Duration, collections::HashSet}; 
 use xxhash_rust::xxh3;
+use rand::prelude::*;
 
 use crate::constants::*;
 
@@ -77,7 +78,8 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
     let mut res_buff = Vec::with_capacity(metadata.size()); 
     let mut tries: usize = 0;
     let mut res_code = ZTPResponseCode::Data;
-    let mut received_pkgs: HashSet<u64> = HashSet::with_capacity(metadata.count()); 
+    let mut received_pkgs: HashSet<u64> = HashSet::with_capacity(metadata.count());
+    let mut rng = rand::rng();
 
     println!("Receiving resource");
     while res_code != ZTPResponseCode::EndRequest{
@@ -101,6 +103,7 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
                 &mut tx_buff,
                 &mut res_code,
                 &mut received_pkgs,
+                &mut rng,
             ); 
         }
         else{
@@ -126,12 +129,13 @@ fn process_response(
     socket: &UdpSocket,
     tx_buff: &mut [u8],
     res_code: &mut ZTPResponseCode,
-    received_pkgs: &mut HashSet<u64>
+    received_pkgs: &mut HashSet<u64>,
+    rng: &mut ThreadRng, 
 ){
     *res_code = response.get_code();
     if *res_code == ZTPResponseCode::Data{
         let data = response.get_bytes().unwrap();
-        let hash_result = xxh3::xxh3_64(data);
+        let hash_result = calculate_hash(data, rng);
         let incoming_hash = response.get_hash().unwrap();
         let pkg_id = response.get_pkg_id().unwrap();
         println!("Incoming Hash: {incoming_hash}; Calculated Hash: {hash_result}");
@@ -185,4 +189,13 @@ fn extract_metadata(response: ZTPResponse) -> Option<ZTPMetadata>{
         return Some(*metadata);
     }
     None    
+}
+
+fn calculate_hash(data: &[u8], rng: &mut ThreadRng) -> u64{
+    let rand_number = rng.random_range(0u8..100);
+    let hash_result = xxh3::xxh3_64(data);
+    if rand_number  < ERROR_CHANCE{
+        return 0; 
+    }
+    hash_result
 }

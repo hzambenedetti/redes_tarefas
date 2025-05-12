@@ -7,3 +7,5 @@ pub const DATA_PIECE_SIZE: usize = 1024;
 
 pub const CLIENT_DIR_PATH: &str = "./download";
 pub const RES_NAME: &str = "teste.jpg";
+
+pub const ERROR_CHANCE: u8 = 30;
