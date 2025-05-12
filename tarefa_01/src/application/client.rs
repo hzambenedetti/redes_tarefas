@@ -1,4 +1,4 @@
-use std::{fs, net::UdpSocket, thread, time::Duration}; 
+use std::{fs, net::UdpSocket, thread, time::Duration, collections::HashSet}; 
 use xxhash_rust::xxh3;
 
 use crate::constants::*;
@@ -77,7 +77,8 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
     let mut res_buff = Vec::with_capacity(metadata.size()); 
     let mut tries: usize = 0;
     let mut res_code = ZTPResponseCode::Data;
-    
+    let mut received_pkgs: HashSet<u64> = HashSet::with_capacity(metadata.count()); 
+
     println!("Receiving resource");
     while res_code != ZTPResponseCode::EndRequest{
     println!("Try {tries}");
@@ -93,22 +94,14 @@ fn receive_resource(socket: &UdpSocket, metadata: ZTPMetadata) -> Option<Vec<u8>
         let bytes = socket.recv(&mut rx_buff).unwrap();
         
         if let Some(response) = parse_response(&rx_buff[..bytes]){
-            res_code = response.get_code();
-            if res_code == ZTPResponseCode::Data{
-                let data = response.get_bytes().unwrap();
-                let hash_result = xxh3::xxh3_64(data);
-                let incoming_hash = response.get_hash().unwrap();
-                println!("Incoming Hash: {incoming_hash}; Calculated Hash: {hash_result}");
-                if hash_result == incoming_hash{
-                    copy_data(&mut res_buff, data);
-                    println!("Received {} bytes from {SERVER_ADDRESS}", data.len());
-                    println!("Total Received: {}", res_buff.len());
-                    send_ack(socket, &mut tx_buff);
-                }
-                else{
-                    send_nack(socket, &mut tx_buff);
-                }
-            }
+            process_response(
+                response, 
+                &mut res_buff, 
+                socket, 
+                &mut tx_buff,
+                &mut res_code,
+                &mut received_pkgs,
+            ); 
         }
         else{
             send_nack(socket, &mut tx_buff);
@@ -127,6 +120,34 @@ fn parse_response(
     None
 }
 
+fn process_response(
+    response: ZTPResponse, 
+    res_buff: &mut Vec<u8>,
+    socket: &UdpSocket,
+    tx_buff: &mut [u8],
+    res_code: &mut ZTPResponseCode,
+    received_pkgs: &mut HashSet<u64>
+){
+    *res_code = response.get_code();
+    if *res_code == ZTPResponseCode::Data{
+        let data = response.get_bytes().unwrap();
+        let hash_result = xxh3::xxh3_64(data);
+        let incoming_hash = response.get_hash().unwrap();
+        let pkg_id = response.get_pkg_id().unwrap();
+        println!("Incoming Hash: {incoming_hash}; Calculated Hash: {hash_result}");
+        if hash_result == incoming_hash && !received_pkgs.contains(&pkg_id){
+            copy_data(res_buff, data);
+            received_pkgs.insert(pkg_id);
+            println!("Received {} bytes from {SERVER_ADDRESS}", data.len());
+            println!("Total Received: {}", res_buff.len());
+            send_ack(socket, tx_buff);
+        }
+        else{
+            send_nack(socket, tx_buff);
+        }
+    }
+}
+
 fn send_ack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
     let ack = ZTPResponse::new(
         ZTPResponseCode::Ack,
@@ -135,12 +156,12 @@ fn send_ack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
     );
     println!("Sending ACK");
     let bytes = ZTPResponse::encode_into_slice(ack, tx_buff).unwrap();
-    println!("Sending bytes (hex): {:02x?}", &tx_buff[..bytes]);
     socket.send(&tx_buff[..bytes]).unwrap()
 }
 
 
 fn send_nack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
+    println!("Sending ACK");
     let nack = ZTPResponse::new(
         ZTPResponseCode::Nack,
         None,
@@ -161,7 +182,7 @@ fn copy_data(res_buff: &mut Vec<u8>, data: &[u8]) -> usize{
 
 fn extract_metadata(response: ZTPResponse) -> Option<ZTPMetadata>{
     if let Some(ZTPResponseData::Metadata(metadata)) = response.get_data(){
-       return Some(*metadata);
+        return Some(*metadata);
     }
     None    
 }

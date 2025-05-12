@@ -103,7 +103,6 @@ fn handle_connection(
             None
         );
         println!("Sending Metadata to {addr}");
-        dbg!(&metadata);
         send_metadata(&socket, &addr, metadata);
         println!("Sending Resource to {addr}");
         send_resource(&socket, &addr, &res_buff);
@@ -203,13 +202,14 @@ fn send_resource(
     let mut tx_buffer: [u8; 4096] = [0; 4096];
     let mut rx_buffer: [u8; 4096] = [0; 4096];
     let mut start = 0;
+    let mut pkg_id = 0;
     while start <= size{
         let end = size.min(start + DATA_PIECE_SIZE);
 
         let response = ZTPResponse::new(
             ztp::ZTPResponseCode::Data, 
             Some(ZTPResponseData::Bytes(res_buff[start..end].to_vec())),
-            Some(0),
+            Some(pkg_id),
         );
 
         let res_size = ZTPResponse::encode_into_slice(
@@ -240,6 +240,7 @@ fn send_resource(
         if tries >= 10 {return;}
         
         start += DATA_PIECE_SIZE;
+        pkg_id += 1;
     }
 
     let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None, None);
