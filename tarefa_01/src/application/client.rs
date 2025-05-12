@@ -165,7 +165,7 @@ fn send_ack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
 
 
 fn send_nack(socket: &UdpSocket, tx_buff: &mut [u8]) -> usize{
-    println!("Sending ACK");
+    println!("Sending NACK");
     let nack = ZTPResponse::new(
         ZTPResponseCode::Nack,
         None,
