@@ -9,6 +9,7 @@ use application::{
 
 pub mod application;
 pub mod constants;
+pub mod ztp_structs;
 
 fn main() {
     let mut server = Server::new();
