@@ -17,8 +17,24 @@ impl Client{
     }
 
     pub fn run(&mut self){
+        let mut handles = vec![];
+        for (id, addr) in CLIENT_ADDRESSES.iter().enumerate(){
+            let handle = thread::spawn(move ||{
+                run_client_thread(addr, id);
+            });
+            handles.push(handle);
+        }
+        
+        for handle in handles{
+            handle.join().unwrap();
+        }
+    
+    }
+}
+
+fn run_client_thread(thread_addr: &str, thread_id: usize){
         println!("Initializing Client");
-        let socket = UdpSocket::bind(CLIENT_ADDRESS).expect("Failed initialize Client");
+        let socket = UdpSocket::bind(thread_addr).expect("Failed initialize Client");
         socket.set_nonblocking(true).unwrap();
         let conn_addr = establish_connection(
             &socket
@@ -46,11 +62,10 @@ impl Client{
             println!("Connection Timeout: Resource did not arrive");
             return;
         }
-        let save_path = format!("{CLIENT_DIR_PATH}/{RES_NAME}");
+        let save_path = format!("{CLIENT_DIR_PATH}/client_{thread_id}_{RES_NAME}");
         
         println!("Saving Resource to: {save_path}");
         fs::write(&save_path, &resource.unwrap()).unwrap();
-    }
 }
 
 fn send_request(socket: &UdpSocket){

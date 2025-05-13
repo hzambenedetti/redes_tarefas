@@ -2,6 +2,14 @@ pub const CLIENT_ADDRESS: &'static str = "127.0.0.1:4242";
 pub const SERVER_ADDRESS: &'static str = "127.0.0.1:34254";
 pub const BUFF_SIZE: usize = 4096;
 
+pub const CLIENT_ADDRESSES: [&'static str; 5] =[
+    "127.0.0.1:4242",
+    "127.0.0.1:4243",
+    "127.0.0.1:4244",
+    "127.0.0.1:4245",
+    "127.0.0.1:4246",
+];
+
 pub const UDP_SOCKETS: [&'static str; 50] = [
     "127.0.0.1:34000", "127.0.0.1:34001", "127.0.0.1:34002", "127.0.0.1:34003", "127.0.0.1:34004",
     "127.0.0.1:34005", "127.0.0.1:34006", "127.0.0.1:34007", "127.0.0.1:34008", "127.0.0.1:34009",
@@ -23,4 +31,4 @@ pub const DATA_PIECE_SIZE: usize = 1024;
 pub const CLIENT_DIR_PATH: &str = "./download";
 pub const RES_NAME: &str = "teste.jpg";
 
-pub const ERROR_CHANCE: u8 = 30;
+pub const ERROR_CHANCE: u8 = 0;
