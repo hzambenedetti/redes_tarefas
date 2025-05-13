@@ -2,8 +2,9 @@ use std::{
     collections::HashSet, fs, io::Error, net::UdpSocket, sync::{mpsc, Arc, Mutex}, thread, time::Duration
 };
 
-use crate::constants::*;
+use crate::{application::ztp::ZTPRequestCode, constants::*};
 use crate::application::ztp;
+use thread_pool::ThreadPool;
 
 use super::ztp::{ZTPMetadata, ZTPResponse, ZTPResponseCode, ZTPResponseData, ZTPRequest};
 
@@ -12,34 +13,58 @@ mod thread_pool;
 /*================================================= SERVER ============================================================= */
 
 pub struct Server{
-    connections: HashSet<String>, 
+    ports_in_use: HashSet<&'static str>,
+    available_ports: HashSet<&'static str>,
+    socket: UdpSocket,
+    pool: ThreadPool,
+    tx_buff: [u8; BUFF_SIZE],
+    rx_buff: [u8; BUFF_SIZE],
 }
 
 impl Server{
-    
     pub fn new() -> Server{
-        let connections = HashSet::with_capacity(THREAD_POOL_SIZE);
-        Server{connections}
+        let ports_in_use = HashSet::with_capacity(THREAD_POOL_SIZE);
+        let mut available_ports: HashSet<&str> = HashSet::with_capacity(UDP_SOCKETS.len());
+        let socket = UdpSocket::bind(SERVER_ADDRESS).unwrap();
+        let pool = ThreadPool::new(THREAD_POOL_SIZE);
+        for socket in UDP_SOCKETS.iter(){
+            available_ports.insert(socket);
+        }
+        Server{
+            ports_in_use,
+            available_ports,
+            socket,
+            pool,
+            tx_buff: [0u8; BUFF_SIZE],
+            rx_buff: [0u8; BUFF_SIZE],
+        }
     }
 
     pub fn run(&mut self){
         println!("Initializing Server");
-        let socket = Arc::new(Mutex::new(UdpSocket::bind(SERVER_ADDRESS).expect("Failed to bind to address")));
         let pool = thread_pool::ThreadPool::new(THREAD_POOL_SIZE);
-        let mut buffer: [u8; 4096] = [0; 4096];
         
         let (sender, receiver) = mpsc::channel::<String>();
 
         let sender = Arc::new(Mutex::new(sender));
-        
-        socket.lock().unwrap().set_nonblocking(true).unwrap();
+
         loop{
             //check for incomming requests
-            if let Ok((_, addr)) = socket.lock().unwrap().peek_from(&mut buffer){
+            if let Ok((bytes, addr)) = self.socket.recv_from(&mut self.rx_buff){
                 let addr_str = format!("{addr}");
+                if let Some(req) = parse_request(& self.rx_buff[..bytes]){
+                    match req.get_code(){
+                        ZTPRequestCode::Conn => { 
+                        },
+                        _ => {
+
+                        },
+                    }
+                }else{
+                
+                }
                 if !self.connections.contains(&addr_str){
                    self.connections.insert(addr_str.clone());
-                    let socket_clone = Arc::clone(&socket);
                     let sender_clone = Arc::clone(&sender);
                     pool.execute(move ||{
                         handle_connection(
@@ -57,6 +82,19 @@ impl Server{
                 self.connections.remove(&msg);
             }
         }
+    }
+
+    fn resolve_conn_req(&self, addr: &str, req: ZTPRequest){
+        
+    }
+
+    fn send_nack(&self, addr: &str){
+        
+    }
+
+    fn send_response(&mut self, addr: &str ,res: ZTPResponse) -> Result<usize, Error>{
+        let byte_count = ZTPResponse::encode_into_slice(res, &mut self.tx_buff).unwrap();
+        self.socket.send_to(&self.tx_buff[..byte_count], addr)
     }
 }
 
@@ -299,3 +337,27 @@ fn drain_socket(
     
     println!("Finished Draining Socket");
 }
+
+fn resolve_conn_req(
+    socket: &UdpSocket,
+    addr: &str,
+    tx_buffer: &mut [u8],
+){
+    const server_addr = 
+    const ack = ZTPResponse::new(
+        ZTPResponseCode::Ack,
+        ZTPResponseData::Addr(())
+    ); 
+}
+
+fn send_nack(socket: &UdpSocket, addr: &str, tx_buff: &mut [u8]) -> usize{
+    println!("Sending NACK");
+    let nack = ZTPResponse::new(
+        ZTPResponseCode::Nack,
+        None,
+        None
+    );
+    let bytes = ZTPResponse::encode_into_slice(nack, tx_buff).unwrap();
+    socket.send(&tx_buff[..bytes]).unwrap()
+}
+

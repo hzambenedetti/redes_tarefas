@@ -20,6 +20,10 @@ impl ZTPRequest{
         }
     }
 
+    pub fn get_code(&self) -> ZTPRequestCode{
+        return self.code;
+    }
+
     pub fn get_resource(&self) -> &str{
         return self.resource.as_str();
     }
@@ -38,10 +42,11 @@ impl ZTPRequest{
 
 }
 
-#[derive(Encode, Decode, Debug)]
+#[derive(Encode, Decode, Debug, Clone, Copy, PartialEq)]
 pub enum ZTPRequestCode{
     Get,
     Post,
+    Conn,
 }
 
 /* ============================================================ ZTP REQUEST ============================================================ */
@@ -141,7 +146,9 @@ pub enum ZTPResponseCode{
 pub enum ZTPResponseData{
     Bytes(Vec<u8>),
     Metadata(ZTPMetadata),
-    PackageIndex(usize)
+    PackageIndex(usize),
+    Addr(String),
+    NackReason()
 }
 
 
