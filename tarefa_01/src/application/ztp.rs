@@ -9,11 +9,11 @@ use crate::constants::DATA_PIECE_SIZE;
 #[derive(Encode, Decode, Debug)]
 pub struct ZTPRequest{
     pub code: ZTPRequestCode,
-    pub resource: String,
+    pub resource: Option<String>,
 }
 
 impl ZTPRequest{
-    pub fn new(code: ZTPRequestCode, resource: String) -> ZTPRequest{
+    pub fn new(code: ZTPRequestCode, resource: Option<String>) -> ZTPRequest{
         ZTPRequest{
             code,
             resource
@@ -25,7 +25,7 @@ impl ZTPRequest{
     }
 
     pub fn get_resource(&self) -> &str{
-        return self.resource.as_str();
+        self.resource.as_ref().unwrap()
     }
 
     pub fn encode_to_vec(self) -> Vec<u8>{
@@ -140,6 +140,7 @@ pub enum ZTPResponseCode{
     Ack,
     Nack,
     NotFound,
+    ConnAccepted,
 }
 
 #[derive(Encode, Decode, Debug)]

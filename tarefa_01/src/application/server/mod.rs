@@ -42,77 +42,114 @@ impl Server{
 
     pub fn run(&mut self){
         println!("Initializing Server");
-        let pool = thread_pool::ThreadPool::new(THREAD_POOL_SIZE);
-        
         let (sender, receiver) = mpsc::channel::<String>();
-
         let sender = Arc::new(Mutex::new(sender));
 
         loop{
             //check for incomming requests
             if let Ok((bytes, addr)) = self.socket.recv_from(&mut self.rx_buff){
-                let addr_str = format!("{addr}");
                 if let Some(req) = parse_request(& self.rx_buff[..bytes]){
                     match req.get_code(){
-                        ZTPRequestCode::Conn => { 
+                        ZTPRequestCode::Conn => {
+                            let client_addr = format!("{addr}");
+                            self.resolve_conn_req(
+                                client_addr,
+                                Arc::clone(&sender),
+                            );
                         },
                         _ => {
 
                         },
                     }
-                }else{
-                
-                }
-                if !self.connections.contains(&addr_str){
-                   self.connections.insert(addr_str.clone());
-                    let sender_clone = Arc::clone(&sender);
-                    pool.execute(move ||{
-                        handle_connection(
-                            addr_str,
-                            socket_clone,
-                            sender_clone
-                        )
-                    });
                 }
             }
 
             //clear finished requests 
             while let Ok(msg) = receiver.try_recv(){
                 println!("Removing address {msg} from set");
-                self.connections.remove(&msg);
+                self.free_socket(&msg);
             }
         }
     }
 
-    fn resolve_conn_req(&self, addr: &str, req: ZTPRequest){
-        
-    }
-
-    fn send_nack(&self, addr: &str){
-        
+    fn resolve_conn_req(
+        &mut self, 
+        addr: String, 
+        sender: Arc<Mutex<mpsc::Sender<String>>>, 
+    ){
+        let free_socket = self.get_available_socket().unwrap();
+        self.take_socket(free_socket);
+        let sender_clone = Arc::clone(&sender);
+        self.pool.execute(||{
+            handle_connection(
+                addr, 
+                free_socket.to_string(), 
+                sender_clone
+            );
+        });
     }
 
     fn send_response(&mut self, addr: &str ,res: ZTPResponse) -> Result<usize, Error>{
         let byte_count = ZTPResponse::encode_into_slice(res, &mut self.tx_buff).unwrap();
         self.socket.send_to(&self.tx_buff[..byte_count], addr)
     }
+
+    fn get_available_socket(&self) -> Option<&'static str>{
+        self.available_ports.iter().next().map(|v| *v)
+    }
+
+    fn free_socket(&mut self, addr: &str){
+        self.ports_in_use.remove(addr);
+        let static_addr = UDP_SOCKETS
+            .iter()
+            .copied()
+            .find(|v| { *v == addr})
+            .unwrap();
+        self.available_ports.insert(static_addr);
+    }
+
+    fn take_socket(&mut self, addr: &str){
+        self.available_ports.remove(addr);
+        let static_addr = UDP_SOCKETS
+            .iter()
+            .copied()
+            .find(|s| *s == addr)
+            .unwrap();
+        self.ports_in_use.insert(static_addr);
+    }
 }
 
 fn handle_connection(
-    addr: String,
-    socket: Arc<Mutex<UdpSocket>>,
+    client_addr: String,
+    socket_addr: String, 
     sender: Arc<Mutex<mpsc::Sender<String>>>
 ){
-    println!("Starting job for addr: {addr}");
+    let socket = UdpSocket::bind(&socket_addr).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    socket.connect(&client_addr).unwrap();
+    println!("Starting job for addr: {client_addr}");
     let mut end_request = false;
     let mut rx_buff: [u8; 4096] = [0; 4096];
+    let mut tx_buff: [u8; 4096] = [0; 4096];
 
-    println!("Draning Socket for addr: {addr}");
+    
+    let accepted = accept_connection(
+        &socket,
+        &client_addr,
+        &mut tx_buff,
+        &mut rx_buff
+    );
+    println!("Connection Accepted");
 
+    if !accepted{
+        println!("Failed to establish connection with {client_addr}, returning");
+        end_request = true;
+    }
+    
     while !end_request{
-        while peek_request(&socket, &addr, &mut rx_buff).is_err(){}
+        while peek_request(&socket, &mut rx_buff).is_err(){}
         
-        let bytes = get_request(&socket, &addr, &mut rx_buff).unwrap();
+        let bytes = get_request(&socket, &mut rx_buff).unwrap();
 
         let req = parse_request(&rx_buff[..bytes]);
         if req.is_none(){
@@ -128,7 +165,7 @@ fn handle_connection(
             Ok(buff)  => {res_buff = buff;},
             Err(_) =>{
                 println!("Resource does not exist!");
-                send_not_found(&socket, &addr);
+                send_not_found(&socket, &client_addr);
                 end_request = true;
                 continue;
             }
@@ -140,19 +177,18 @@ fn handle_connection(
             )),
             None
         );
-        println!("Sending Metadata to {addr}");
-        send_metadata(&socket, &addr, metadata);
-        println!("Sending Resource to {addr}");
-        send_resource(&socket, &addr, &res_buff);
+        println!("Sending Metadata to {client_addr}");
+        send_metadata(&socket, &client_addr, metadata);
+        println!("Sending Resource to {client_addr}");
+        send_resource(&socket, &client_addr, &res_buff);
         end_request = true;
     }
-    println!("Sending EOR to {addr}");
-    send_end_of_req(&socket, &addr);
+    println!("Sending EOR to {client_addr}");
+    send_end_of_req(&socket, &client_addr);
     thread::sleep(Duration::from_millis(TTL_MILLIS));
-    drain_socket(&socket, &addr);
 
-    println!("Finishing job for address {addr}");
-    sender.lock().unwrap().send(addr).unwrap();
+    println!("Finishing job for address {client_addr}");
+    sender.lock().unwrap().send(socket_addr).unwrap();
 }
 
 fn parse_request(buffer: &[u8]) -> Option<ZTPRequest>{
@@ -162,16 +198,12 @@ fn parse_request(buffer: &[u8]) -> Option<ZTPRequest>{
     None
 }
 
-fn get_request(socket: &Arc<Mutex<UdpSocket>>, addr: &str, buffer: &mut[u8]) -> Result<usize, Error>{
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.connect(addr).unwrap();
-    locked_socket.recv(buffer)
+fn get_request(socket: &UdpSocket, buffer: &mut[u8]) -> Result<usize, Error>{
+    socket.recv(buffer)
 }
 
-fn peek_request(socket: &Arc<Mutex<UdpSocket>>, addr: &str, buffer: &mut[u8]) -> Result<usize, Error>{
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.connect(addr).unwrap();
-    locked_socket.peek(buffer)
+fn peek_request(socket: &UdpSocket, buffer: &mut[u8]) -> Result<usize, Error>{
+    socket.peek(buffer)
 }
 
 fn get_resource(resource_name: &str) -> Result<Vec<u8>, Error>{ 
@@ -179,27 +211,26 @@ fn get_resource(resource_name: &str) -> Result<Vec<u8>, Error>{
     fs::read(&path)
 }
 
-fn send_not_found(socket: &Arc<Mutex<UdpSocket>>, addr: &str) -> usize{
+fn send_not_found(socket: &UdpSocket, addr: &str) -> usize{
     let not_found_res = ZTPResponse::new(ZTPResponseCode::NotFound, None, None);
     let vec = ZTPResponse::encode_to_vec(
         not_found_res,
     ).unwrap();
 
-    socket.lock().unwrap().send_to(&vec, addr).unwrap()
+    socket.send_to(&vec, addr).unwrap()
 }
 
-fn send_end_of_req(socket: &Arc<Mutex<UdpSocket>>, addr: &str) -> usize{
+fn send_end_of_req(socket: &UdpSocket, addr: &str) -> usize{
     let end_of_req = ZTPResponse::new(ZTPResponseCode::EndRequest, None, None);
     let vec = ZTPResponse::encode_to_vec(
         end_of_req, 
     ).unwrap();
 
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.send_to(&vec, addr).unwrap()
+    socket.send_to(&vec, addr).unwrap()
 }
 
 fn send_metadata(
-    socket: &Arc<Mutex<UdpSocket>>,
+    socket: &UdpSocket,
     addr: &str,
     metadata: ZTPResponse 
 ) -> bool{
@@ -210,13 +241,11 @@ fn send_metadata(
         &mut tx_buff, 
     ).unwrap();
 
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.send_to(&tx_buff[..bytes], addr).unwrap();
-    drop(locked_socket);
+    socket.send_to(&tx_buff[..bytes], addr).unwrap();
     println!("Sent Metadata, Waiting for ACK...");
 
     let mut tries = 0;
-    while peek_request(socket, addr, &mut rx_buff).is_err(){
+    while peek_request(socket, &mut rx_buff).is_err(){
         println!("Waiting, try {tries}");
         thread::sleep(Duration::from_millis(TTL_MILLIS));
         tries += 1;
@@ -225,12 +254,12 @@ fn send_metadata(
         }
     }
     println!("Metadata ACK received!");
-    let response = get_response(socket, addr, &mut rx_buff);
+    let response = get_response(socket, &mut rx_buff);
     return true;
 }
 
 fn send_resource(
-    socket: &Arc<Mutex<UdpSocket>>,
+    socket: &UdpSocket,
     addr: &str,
     res_buff: &[u8],
 ){
@@ -264,7 +293,7 @@ fn send_resource(
             thread::sleep(Duration::from_millis(TTL_MILLIS));
             
             let is_ack;
-            if let Some(res) = get_response(socket,addr, &mut rx_buffer){
+            if let Some(res) = get_response(socket, &mut rx_buffer){
                 println!("Received Response from {addr}");
                 is_ack = res.is_ack(); 
             } else{
@@ -293,22 +322,18 @@ fn send_resource(
 }
 
 fn send_data_piece(
-    socket: &Arc<Mutex<UdpSocket>>,
+    socket: &UdpSocket,
     addr: &str,
     buff: &[u8],
 ){
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.send_to(buff, addr);
+    socket.send_to(buff, addr);
 }
 
 fn get_response(
-    socket: &Arc<Mutex<UdpSocket>>,
-    addr: &str,
+    socket: &UdpSocket,
     rx_buff: &mut [u8],
 ) -> Option<ZTPResponse>{ 
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.connect(addr);
-    match locked_socket.recv(rx_buff){
+    match socket.recv(rx_buff){
         Ok(bytes) =>{
             println!("Received {bytes} bytes");
             println!("Received bytes (hex): {:02x?}", &rx_buff[..bytes]);
@@ -323,32 +348,6 @@ fn get_response(
 
 }
 
-fn drain_socket(
-    socket: &Arc<Mutex<UdpSocket>>,
-    addr: &str,
-){
-    let mut drain_buff = [0u8; 4096];
-    let locked_socket = socket.lock().unwrap();
-    locked_socket.connect(addr).unwrap();
-
-    while let Ok(bytes) = locked_socket.recv(&mut drain_buff){
-        println!("Received bytes (hex): {:02x?}", &drain_buff[..bytes]);
-    }
-    
-    println!("Finished Draining Socket");
-}
-
-fn resolve_conn_req(
-    socket: &UdpSocket,
-    addr: &str,
-    tx_buffer: &mut [u8],
-){
-    const server_addr = 
-    const ack = ZTPResponse::new(
-        ZTPResponseCode::Ack,
-        ZTPResponseData::Addr(())
-    ); 
-}
 
 fn send_nack(socket: &UdpSocket, addr: &str, tx_buff: &mut [u8]) -> usize{
     println!("Sending NACK");
@@ -359,5 +358,38 @@ fn send_nack(socket: &UdpSocket, addr: &str, tx_buff: &mut [u8]) -> usize{
     );
     let bytes = ZTPResponse::encode_into_slice(nack, tx_buff).unwrap();
     socket.send(&tx_buff[..bytes]).unwrap()
+}
+
+fn accept_connection(
+    socket: &UdpSocket,
+    client_addr: &str,
+    tx_buff: &mut [u8],
+    rx_buff: &mut [u8]
+) -> bool{
+    let conn_res = ZTPResponse::new(
+        ZTPResponseCode::ConnAccepted,
+        None,
+        None
+    );
+
+    let bytes_written = ZTPResponse::encode_into_slice(conn_res, tx_buff).unwrap();
+    let mut tries = 0;
+    while tries < MAX_RETRIES{
+        send_data_piece(socket, client_addr, &tx_buff[..bytes_written]);
+        thread::sleep(Duration::from_millis(TTL_MILLIS));
+        
+        let ack = get_response(socket, rx_buff);
+        if ack.is_none(){
+            tries += 1;
+            continue;
+        }
+
+        if ack.unwrap().is_ack(){return true;}
+        
+        tries += 1;
+
+    }
+    
+    false
 }
 

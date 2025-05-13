@@ -11,17 +11,23 @@ pub mod application;
 pub mod constants;
 
 fn main() {
-    let mut server = Server::new();
-    let mut client = Client::new();
 
     let var_map = collect_vars();
     if let Some(role) = var_map.get("role"){
         match role.as_str(){
-            "server" => server.run(),
-            _ => client.run()
+            "server" => 
+            {
+                let mut server = Server::new();
+                server.run()
+            },
+            _ => {
+                let mut client = Client::new();
+                client.run()
+            }
         }
     }
     else{
+       let mut client = Client::new();
        client.run(); 
     }
 }

@@ -19,9 +19,18 @@ impl Client{
     pub fn run(&mut self){
         println!("Initializing Client");
         let socket = UdpSocket::bind(CLIENT_ADDRESS).expect("Failed initialize Client");
-        socket.connect(SERVER_ADDRESS).unwrap();
         socket.set_nonblocking(true).unwrap();
-        
+        let conn_addr = establish_connection(
+            &socket
+        );
+
+        if conn_addr.is_none(){
+            println!("Failed to establish conneciton");
+            return;
+        }
+        let conn_addr = conn_addr.unwrap();
+        socket.connect(&conn_addr).unwrap();
+
         send_request(&socket);
         println!("Sent GET request to {SERVER_ADDRESS}");
 
@@ -45,7 +54,7 @@ impl Client{
 }
 
 fn send_request(socket: &UdpSocket){
-    let req = ZTPRequest::new(ZTPRequestCode::Get, RES_NAME.to_string());
+    let req = ZTPRequest::new(ZTPRequestCode::Get, Some(RES_NAME.to_string()));
     let bytes = ZTPRequest::encode_to_vec(req);
     socket.send(&bytes).unwrap();
 }
@@ -64,6 +73,7 @@ fn receive_metadata(socket: &UdpSocket) -> Option<ZTPMetadata>{
         
         let bytes = socket.recv(&mut rx_buff).unwrap();
         if let Some(res) =  parse_response(&rx_buff[..bytes]){
+            if res.get_code() != ZTPResponseCode::Metadata{continue};
             send_ack(socket, &mut tx_buff);
             return extract_metadata(res);
         }
@@ -198,4 +208,64 @@ fn calculate_hash(data: &[u8], rng: &mut ThreadRng) -> u64{
         return 0; 
     }
     hash_result
+}
+
+fn establish_connection(
+    socket: &UdpSocket,
+) -> Option<String>{
+   let mut tx_buff = [0u8; 4096];
+   let mut rx_buff = [0u8; 4096];
+   let conn_req = ZTPRequest::new(
+        ZTPRequestCode::Conn, 
+        None 
+    );
+
+    let bytes_written = ZTPRequest::encode_into_slice(conn_req, &mut tx_buff).unwrap();
+    let mut tries = 0;
+    while tries < MAX_RETRIES{
+        socket.send_to(&tx_buff[..bytes_written], SERVER_ADDRESS).unwrap();
+        thread::sleep(Duration::from_millis(TTL_MILLIS * 2));
+        
+        let conn = get_response(socket, &mut rx_buff);
+        if conn.is_none(){
+            tries += 1;
+            continue;
+        }
+
+        let (res, addr) = conn.unwrap();
+
+        if res.get_code() == ZTPResponseCode::ConnAccepted{
+            let ack = ZTPResponse::new(
+                ZTPResponseCode::Ack,
+                None,
+                None
+            );
+            println!("Sending ACK");
+            let bytes = ZTPResponse::encode_into_slice(ack, &mut tx_buff).unwrap();
+            socket.send_to(&tx_buff[..bytes], &addr).unwrap();
+            return Some(addr);
+        }
+        tries += 1;
+    }
+
+    None
+}
+
+fn get_response(
+    socket: &UdpSocket,
+    rx_buff: &mut [u8],
+) -> Option<(ZTPResponse, String)>{ 
+    match socket.recv_from(rx_buff){
+        Ok((bytes, addr)) =>{
+            println!("Received {bytes} bytes");
+            println!("Received bytes (hex): {:02x?}", &rx_buff[..bytes]);
+            let response: ZTPResponse = ZTPResponse::decode_from_slice(
+                &rx_buff[..bytes],
+            ).unwrap().0;
+
+            Some((response, addr.to_string()))
+        },
+        Err(_) => None
+    }
+
 }
