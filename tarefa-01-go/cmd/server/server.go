@@ -1,144 +1,147 @@
 package main
 
 import (
-	"encoding/binary"
-	"fmt"
-	"hash/crc32"
-	"io"
-	"net"
-	"os"
-	"strings"
-	"time"
+    "crypto/sha256"
+    "encoding/binary"
+    "flag"
+    "io"
+    "log"
+    "net"
+    "os"
+    "time"
 )
 
+// Packet types
 const (
-	HeaderSize  = 9 // seqBit (1) + checksum (4) + data length (4)
-	MaxDataSize = 1400
-	ServerPort  = 9000
-	Timeout     = 2 * time.Second
-	MaxRetries  = 5
-	resourcePath = "/home/henrique/Documents/Faculdade/2025_1/redes_de_computadores/redes_tarefas/tarefa-01-go/resources/"
+    TypeGET  = 1
+    TypeDATA = 2
+    TypeACK  = 3
+    TypeEOR  = 4
+)
+
+// Header lengths
+const (
+    HeaderSize       = 1 + 1 + 2 + 32 // type + seqBit + length + hash
+		resourcePath 		 = "/home/henrique/Documents/Faculdade/2025_1/redes_de_computadores/redes_tarefas/tarefa-01-go/resources/"
+)
+
+// Configurable via flags
+var (
+    addr       = flag.String("addr", ":9000", "server listen address")
+    timeoutMs  = flag.Int("timeout", 500, "ACK timeout in ms")
+    maxRetries = flag.Int("maxretries", 10, "max retries per packet")
+    maxPayload = flag.Int("payload", 1024, "max payload size per packet")
 )
 
 func main() {
-	addr := net.UDPAddr{Port: ServerPort}
-	conn, err := net.ListenUDP("udp", &addr)
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
+    flag.Parse()
+    log.SetFlags(0)
 
-	fmt.Printf("[SERVER] Listening on port %d\n", ServerPort)
+    addrUDP, err := net.ResolveUDPAddr("udp", *addr)
+    if err != nil {
+        log.Fatalf("[%s] ResolveUDPAddr error: %v", timestamp(), err)
+    }
+    conn, err := net.ListenUDP("udp", addrUDP)
+    if err != nil {
+        log.Fatalf("[%s] ListenUDP error: %v", timestamp(), err)
+    }
+    defer conn.Close()
+    log.Printf("[%s] Server listening on %s", timestamp(), *addr)
 
-	buffer := make([]byte, MaxDataSize+HeaderSize)
-	for {
-		n, clientAddr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			fmt.Println("[SERVER] Read error:", err)
-			continue
-		}
-
-		go handleClient(conn, clientAddr, buffer[:n])
-	}
+    for {
+        buf := make([]byte, HeaderSize+*maxPayload)
+        n, clientAddr, err := conn.ReadFromUDP(buf)
+        if err != nil {
+            log.Printf("[%s] Read error: %v", timestamp(), err)
+            continue
+        }
+        if n < HeaderSize || buf[0] != TypeGET {
+            continue
+        }
+        // Handle single client, block until done
+        serveClient(conn, clientAddr, buf[:n])
+				conn.SetReadDeadline(time.Time{}) // disable timeout
+    }
 }
 
-func handleClient(conn *net.UDPConn, clientAddr *net.UDPAddr, request []byte) {
-	reqStr := string(request)
-	if !strings.HasPrefix(reqStr, "GET ") {
-		fmt.Printf("[SERVER] Invalid request from %s\n", clientAddr)
-		return
-	}
+func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
+    // Parse GET
+    length := int(binary.BigEndian.Uint16(req[2:4]))
+    filename := string(req[4:4+length])
+    path := resourcePath + filename 
 
-	filename := strings.TrimSpace(reqStr[4:])
-	fmt.Printf("[SERVER] File request for '%s' from %s\n", filename, clientAddr)
+    f, err := os.Open(path)
+    if err != nil {
+        log.Printf("[%s] File not found: %s", timestamp(), path)
+        return
+    }
+    defer f.Close()
 
-	file, err := os.Open(resourcePath + filename)
-	if err != nil {
-		fmt.Printf("[SERVER] File not found: %s\n", filename)
-		sendError(conn, clientAddr, "File not found")
-		return
-	}
-	defer file.Close()
+    data, err := io.ReadAll(f)
+    if err != nil {
+        log.Printf("[%s] Read error: %v", timestamp(), err)
+        return
+    }
+    fullHash := sha256.Sum256(data)
 
-	// fileInfo, _ := file.Stat()
-	// if fileInfo.Size() < 1<<20 {
-	// 	sendError(conn, clientAddr, "File too small")
-	// 	return
-	// }
+    seqBit := byte(0)
+    timeout := time.Duration(*timeoutMs) * time.Millisecond
 
-	var seqBit byte = 0
-	retries := 0
-	buf := make([]byte, MaxDataSize)
+    // Send each segment stop-and-wait
+    for offset := 0; offset < len(data); offset += *maxPayload {
+        end := offset + *maxPayload
+        if end > len(data) {
+            end = len(data)
+        }
+        payload := data[offset:end]
+        hash := sha256.Sum256(payload)
 
-	for {
-		n, err := file.Read(buf)
-		if err == io.EOF {
-			fmt.Printf("[SERVER] File transfer complete to %s\n", clientAddr)
-			return
-		}
+        pkt := make([]byte, HeaderSize+len(payload))
+        pkt[0] = TypeDATA
+        pkt[1] = seqBit
+        binary.BigEndian.PutUint16(pkt[2:4], uint16(len(payload)))
+        copy(pkt[4:36], hash[:])
+        copy(pkt[36:], payload)
 
-		segment := createSegment(seqBit, buf[:n])
-		fmt.Printf("[SERVER] Sending segment (seq=%d) to %s\n", seqBit, clientAddr)
+        retries := 0
+        for {
+            // simulate drop
+						conn.WriteToUDP(pkt, client)
+						log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
 
-		for retries < MaxRetries {
-			sendSegment(conn, clientAddr, segment)
-			ackReceived := waitForACK(conn, seqBit)
+            conn.SetReadDeadline(time.Now().Add(timeout))
+            ackBuf := make([]byte, HeaderSize)
+            n, _, err := conn.ReadFromUDP(ackBuf)
+            if err == nil && n >= HeaderSize && ackBuf[0] == TypeACK && ackBuf[1] == seqBit {
+                log.Printf("[%s] RECV ACK bit=%d", timestamp(), seqBit)
+                seqBit ^= 1
+                break
+            }
+            retries++
+            if retries > *maxRetries {
+                log.Printf("[%s] Max retries reached, aborting %s", timestamp(), filename)
+                return
+            }
+        }
+    }
 
-			if ackReceived {
-				fmt.Printf("[SERVER] Received ACK %d from %s\n", seqBit, clientAddr)
-				seqBit ^= 1 // Toggle sequence bit
-				retries = 0
-				break
-			}
+    // Send EOR with full-file hash
+    pkt := make([]byte, HeaderSize)
+    pkt[0] = TypeEOR
+    pkt[1] = seqBit
+    copy(pkt[4:36], fullHash[:])
+    conn.WriteToUDP(pkt, client)
+    log.Printf("[%s] SENT EOR bit=%d", timestamp(), seqBit)
 
-			retries++
-			fmt.Printf("[SERVER] Timeout, resending segment (seq=%d) to %s (retry %d)\n", 
-				seqBit, clientAddr, retries)
-		}
-
-		if retries >= MaxRetries {
-			fmt.Printf("[SERVER] Max retries exceeded for %s\n", clientAddr)
-			return
-		}
-	}
+    // Wait final ACK
+    conn.SetReadDeadline(time.Now().Add(timeout))
+    ackBuf := make([]byte, HeaderSize)
+    n, _, _ := conn.ReadFromUDP(ackBuf)
+    if n >= HeaderSize && ackBuf[0] == TypeACK && ackBuf[1] == seqBit {
+        log.Printf("[%s] RECV final ACK bit=%d, transfer complete", timestamp(), seqBit)
+    }
 }
 
-func createSegment(seqBit byte, data []byte) []byte {
-	checksum := crc32.ChecksumIEEE(data)
-	buf := make([]byte, HeaderSize+len(data))
-	
-	buf[0] = seqBit
-	binary.BigEndian.PutUint32(buf[1:5], checksum)
-	binary.BigEndian.PutUint32(buf[5:9], uint32(len(data)))
-	copy(buf[9:], data)
-	
-	return buf
-}
-
-func sendSegment(conn *net.UDPConn, addr *net.UDPAddr, segment []byte) {
-	_, err := conn.WriteToUDP(segment, addr)
-	if err != nil {
-		fmt.Println("[SERVER] Send error:", err)
-	}
-}
-
-func waitForACK(conn *net.UDPConn, expectedSeq byte) bool {
-	ackBuffer := make([]byte, 1)
-	conn.SetReadDeadline(time.Now().Add(Timeout))
-	
-	for {
-		n, _, err := conn.ReadFromUDP(ackBuffer)
-		if err != nil {
-			return false
-		}
-
-		if n == 1 && ackBuffer[0] == expectedSeq {
-			return true
-		}
-	}
-}
-
-func sendError(conn *net.UDPConn, addr *net.UDPAddr, message string) {
-	fmt.Printf("[SERVER] Sending error to %s: %s\n", addr, message)
-	conn.WriteToUDP([]byte("ERROR: "+message), addr)
+func timestamp() string {
+    return time.Now().Format(time.RFC3339)
 }
