@@ -48,8 +48,8 @@ func main() {
     defer conn.Close()
     log.Printf("[%s] Server listening on %s", timestamp(), *addr)
 
+		buf := make([]byte, HeaderSize+*maxPayload)
     for {
-        buf := make([]byte, HeaderSize+*maxPayload)
         n, clientAddr, err := conn.ReadFromUDP(buf)
         if err != nil {
             log.Printf("[%s] Read error: %v", timestamp(), err)
@@ -89,10 +89,7 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
 
     // Send each segment stop-and-wait
     for offset := 0; offset < len(data); offset += *maxPayload {
-        end := offset + *maxPayload
-        if end > len(data) {
-            end = len(data)
-        }
+        end := min(offset + *maxPayload, len(data))
         payload := data[offset:end]
         hash := sha256.Sum256(payload)
 
@@ -105,7 +102,6 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
 
         retries := 0
         for {
-            // simulate drop
 						conn.WriteToUDP(pkt, client)
 						log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
 
@@ -126,13 +122,8 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
     }
 
     // Send EOR with full-file hash
-    pkt := make([]byte, HeaderSize)
-    pkt[0] = TypeEOR
-    pkt[1] = seqBit
-    copy(pkt[4:36], fullHash[:])
-    conn.WriteToUDP(pkt, client)
-    log.Printf("[%s] SENT EOR bit=%d", timestamp(), seqBit)
-
+		sendEOR(conn, client, fullHash, seqBit)
+		
     // Wait final ACK
     conn.SetReadDeadline(time.Now().Add(timeout))
     ackBuf := make([]byte, HeaderSize)
@@ -140,6 +131,15 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
     if n >= HeaderSize && ackBuf[0] == TypeACK && ackBuf[1] == seqBit {
         log.Printf("[%s] RECV final ACK bit=%d, transfer complete", timestamp(), seqBit)
     }
+}
+
+func sendEOR(conn *net.UDPConn, client *net.UDPAddr, fullHash [32]byte, seqBit byte){
+    pkt := make([]byte, HeaderSize)
+    pkt[0] = TypeEOR
+    pkt[1] = seqBit
+    copy(pkt[4:36], fullHash[:])
+    conn.WriteToUDP(pkt, client)
+    log.Printf("[%s] SENT EOR bit=%d", timestamp(), seqBit)
 }
 
 func timestamp() string {
