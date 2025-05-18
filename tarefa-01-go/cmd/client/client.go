@@ -32,6 +32,10 @@ var (
 )
 
 func main() {
+		clientInstance()
+}
+
+func clientInstance(){
     flag.Parse()
     if *fileName == "" {
         fmt.Println("Usage: client -file <filename> [flags]")
@@ -106,7 +110,7 @@ func main() {
             log.Printf("[%s] SENT final ACK bit=%d, download complete: %s", timestamp(), bit, outPath)
             return
         }
-    }
+		}
 }
 
 func sendGET(conn *net.UDPConn, filename string) {
