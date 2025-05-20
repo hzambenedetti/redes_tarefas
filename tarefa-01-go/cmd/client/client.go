@@ -6,7 +6,6 @@ import (
     "flag"
     "fmt"
     "log"
-    "math/rand"
     "net"
     "os"
     "path/filepath"
@@ -26,7 +25,6 @@ const (
 var (
     addr       = flag.String("addr", "localhost:9000", "server address")
     timeoutMs  = flag.Int("timeout", 500, "ACK timeout in ms")
-    dropRate   = flag.Int("droprate", 10, "packet drop % for simulation")
     maxRetries = flag.Int("maxretries", 10, "max retries per packet")
     maxPayload = flag.Int("payload", 1024, "max payload size per packet")
     fileName   = flag.String("file", "teste.jpg", "file to download")
@@ -43,7 +41,6 @@ func clientInstance(){
         os.Exit(1)
     }
     log.SetFlags(0)
-    rand.Seed(time.Now().UnixNano())
 
     addrUDP, err := net.ResolveUDPAddr("udp", *addr)
     if err != nil {

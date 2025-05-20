@@ -9,6 +9,7 @@ import (
     "net"
     "os"
     "time"
+    "math/rand"
 )
 
 // Packet types
@@ -32,6 +33,7 @@ var (
     timeoutMs  = flag.Int("timeout", 500, "ACK timeout in ms")
     maxRetries = flag.Int("maxretries", 10, "max retries per packet")
     maxPayload = flag.Int("payload", 1024, "max payload size per packet")
+    dropRate   = flag.Int("droprate", 0, "packet drop % for simulation")
 )
 
 func main() {
@@ -71,6 +73,7 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
     filename := string(req[4:4+length])
     path := resourcePath + filename 
 
+    rand.Seed(time.Now().UnixNano())
     f, err := os.Open(path)
     if err != nil {
         log.Printf("[%s] File not found: %s", timestamp(), path)
@@ -104,7 +107,11 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
 
         retries := 0
         for {
-						conn.WriteToUDP(pkt, client)
+            if rand.Intn(100) > *dropRate{
+              conn.WriteToUDP(pkt, client)
+            } else{
+              log.Printf("[%s] Simulating Data loss", timestamp()) 
+            }
 						log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
 
             conn.SetReadDeadline(time.Now().Add(timeout))
