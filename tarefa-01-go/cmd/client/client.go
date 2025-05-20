@@ -116,12 +116,16 @@ func clientInstance(){
     return
   }
   outFile, err := os.Create(outPath)
+  defer outFile.Close()
   if err != nil {
     log.Fatalf("[%s] Create file error: %v", timestamp(), err)
   }
-  defer outFile.Close()
-  log.Fatalf("[%s] Saving file %s", timestamp(), outPath)
-  outFile.Write(fullData)
+  log.Printf("[%s] Saving file %s of size %d bytes", timestamp(), outPath, len(fullData))
+  written, err := outFile.Write(fullData)
+  if err != nil{
+    log.Fatalf("[%s] Error Writing file %v", timestamp(), err)
+  }
+  log.Printf("[%s] %d bytes written, finishing execution", timestamp(), written)
     
 }
 
