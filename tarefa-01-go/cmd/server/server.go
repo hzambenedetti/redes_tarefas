@@ -17,12 +17,13 @@ const (
     TypeDATA = 2
     TypeACK  = 3
     TypeEOR  = 4
+    TypeNOTFOUND = 5
 )
 
 // Header lengths
 const (
     HeaderSize       = 1 + 1 + 2 + 32 // type + seqBit + length + hash
-		resourcePath 		 = "/home/henrique/Documents/Faculdade/2025_1/redes_de_computadores/redes_tarefas/tarefa-01-go/resources/"
+		resourcePath 		 = "resources/"
 )
 
 // Configurable via flags
@@ -73,6 +74,7 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
     f, err := os.Open(path)
     if err != nil {
         log.Printf("[%s] File not found: %s", timestamp(), path)
+        sendNOTFOUND(conn, client)
         return
     }
     defer f.Close()
@@ -140,6 +142,12 @@ func sendEOR(conn *net.UDPConn, client *net.UDPAddr, fullHash [32]byte, seqBit b
     copy(pkt[4:36], fullHash[:])
     conn.WriteToUDP(pkt, client)
     log.Printf("[%s] SENT EOR bit=%d", timestamp(), seqBit)
+}
+
+func sendNOTFOUND(conn *net.UDPConn, client *net.UDPAddr){
+    pkt := make([]byte, HeaderSize)
+    pkt[0] = TypeNOTFOUND
+    conn.WriteToUDP(pkt, client)
 }
 
 func timestamp() string {

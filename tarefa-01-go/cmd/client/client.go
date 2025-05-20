@@ -18,6 +18,7 @@ const (
     TypeDATA = 2
     TypeACK  = 3
     TypeEOR  = 4
+    TypeNOTFOUND = 5
     HeaderSize      = 1 + 1 + 2 + 32
     DefaultDownload = "download"
 )
@@ -59,18 +60,14 @@ func clientInstance(){
 
     // Prepare output
     outPath := filepath.Join(DefaultDownload, *fileName)
-    outFile, err := os.Create(outPath)
-    if err != nil {
-        log.Fatalf("[%s] Create file error: %v", timestamp(), err)
-    }
-    defer outFile.Close()
 
     expectedBit := byte(0)
     fullData := []byte{}
     timeout := time.Duration(*timeoutMs) * time.Millisecond
     retries := 0
-
-    for {
+    var expectedFullHash [32]byte
+    isEOR := false
+    for !isEOR{
         buf := make([]byte, HeaderSize+*maxPayload)
         conn.SetReadDeadline(time.Now().Add(timeout))
         _, err := conn.Read(buf)
@@ -94,7 +91,6 @@ func clientInstance(){
                 sendACK(conn, expectedBit^1) // NACK by sending old bit
                 continue
             }
-            outFile.Write(payload)
             fullData = append(fullData, payload...)
             sendACK(conn, bit)
             log.Printf("[%s] SENT ACK bit=%d", timestamp(), bit)
@@ -102,15 +98,31 @@ func clientInstance(){
 
         case TypeEOR:
             // verify full-file hash
-            fullHash := sha256.Sum256(fullData)
-            if !equal(fullHash[:], buf[4:36]) {
-                log.Fatalf("[%s] Full-file hash mismatch", timestamp())
-            }
+            isEOR = true
+            copy(expectedFullHash[:], buf[4:36])
             sendACK(conn, bit)
             log.Printf("[%s] SENT final ACK bit=%d, download complete: %s", timestamp(), bit, outPath)
-            return
+            break
+
+        case TypeNOTFOUND:
+          log.Fatalf("[%s] File not found", timestamp())
+          break 
         }
 		}
+
+  fullHash := sha256.Sum256(fullData)
+  if !equal(fullHash[:], expectedFullHash[:]) {
+    log.Fatalf("[%s] Full-file hash mismatch ", timestamp())
+    return
+  }
+  outFile, err := os.Create(outPath)
+  if err != nil {
+    log.Fatalf("[%s] Create file error: %v", timestamp(), err)
+  }
+  defer outFile.Close()
+  log.Fatalf("[%s] Saving file %s", timestamp(), outPath)
+  outFile.Write(fullData)
+    
 }
 
 func sendGET(conn *net.UDPConn, filename string) {
