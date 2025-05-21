@@ -109,10 +109,10 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
         for {
             if rand.Intn(100) > *dropRate{
               conn.WriteToUDP(pkt, client)
+						  log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
             } else{
               log.Printf("[%s] Simulating Data loss", timestamp()) 
             }
-						log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
 
             conn.SetReadDeadline(time.Now().Add(timeout))
             ackBuf := make([]byte, HeaderSize)
