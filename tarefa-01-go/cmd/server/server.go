@@ -9,6 +9,7 @@ import (
     "net"
     "os"
     "time"
+    "math/rand"
 )
 
 // Packet types
@@ -17,12 +18,13 @@ const (
     TypeDATA = 2
     TypeACK  = 3
     TypeEOR  = 4
+    TypeNOTFOUND = 5
 )
 
 // Header lengths
 const (
     HeaderSize       = 1 + 1 + 2 + 32 // type + seqBit + length + hash
-		resourcePath 		 = "/home/henrique/Documents/Faculdade/2025_1/redes_de_computadores/redes_tarefas/tarefa-01-go/resources/"
+		resourcePath 		 = "resources/"
 )
 
 // Configurable via flags
@@ -31,6 +33,7 @@ var (
     timeoutMs  = flag.Int("timeout", 500, "ACK timeout in ms")
     maxRetries = flag.Int("maxretries", 10, "max retries per packet")
     maxPayload = flag.Int("payload", 1024, "max payload size per packet")
+    dropRate   = flag.Int("droprate", 0, "packet drop % for simulation")
 )
 
 func main() {
@@ -70,9 +73,11 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
     filename := string(req[4:4+length])
     path := resourcePath + filename 
 
+    rand.Seed(time.Now().UnixNano())
     f, err := os.Open(path)
     if err != nil {
         log.Printf("[%s] File not found: %s", timestamp(), path)
+        sendNOTFOUND(conn, client)
         return
     }
     defer f.Close()
@@ -102,8 +107,12 @@ func serveClient(conn *net.UDPConn, client *net.UDPAddr, req []byte) {
 
         retries := 0
         for {
-						conn.WriteToUDP(pkt, client)
-						log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
+            if rand.Intn(100) > *dropRate{
+              conn.WriteToUDP(pkt, client)
+						  log.Printf("[%s] SENT DATA bit=%d size=%d", timestamp(), seqBit, len(payload))
+            } else{
+              log.Printf("[%s] Simulating Data loss", timestamp()) 
+            }
 
             conn.SetReadDeadline(time.Now().Add(timeout))
             ackBuf := make([]byte, HeaderSize)
@@ -140,6 +149,12 @@ func sendEOR(conn *net.UDPConn, client *net.UDPAddr, fullHash [32]byte, seqBit b
     copy(pkt[4:36], fullHash[:])
     conn.WriteToUDP(pkt, client)
     log.Printf("[%s] SENT EOR bit=%d", timestamp(), seqBit)
+}
+
+func sendNOTFOUND(conn *net.UDPConn, client *net.UDPAddr){
+    pkt := make([]byte, HeaderSize)
+    pkt[0] = TypeNOTFOUND
+    conn.WriteToUDP(pkt, client)
 }
 
 func timestamp() string {
