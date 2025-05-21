@@ -70,6 +70,7 @@ func clientInstance(){
         _, err := conn.Read(buf)
         if err != nil {
             if retries++; retries > *maxRetries {
+                sendACK(conn, expectedBit^1)
                 log.Fatalf("[%s] Max retries reached, aborting", timestamp())
             }
             continue
