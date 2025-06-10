@@ -35,6 +35,6 @@ fn exec_server(address: &str){
     server.run();
 }
 
-fn print_usage(args: &Args){
-
+fn print_usage(_args: &Args){
+    println!(":Angry face:");
 }
