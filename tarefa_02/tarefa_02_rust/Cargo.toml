@@ -5,3 +5,8 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.40", features = ["derive"] }
+
+# [[bin]]
+# name = "app"
+# path = "./src/main.rs"
+
