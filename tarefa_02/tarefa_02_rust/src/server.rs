@@ -29,10 +29,12 @@ impl Server{
 
 
 fn handle_connection(mut stream: TcpStream){
+    stream.set_nodelay(true).unwrap();
     println!("Received stream from remote address: {}", stream.peer_addr().unwrap());
     for i in 0..10{
         let response = format!("Hello number {i}!");
+        println!("Sending message: {response}");
         stream.write(response.as_bytes()).unwrap();
-        thread::sleep(Duration::from_millis(2000));
+        thread::sleep(Duration::from_millis(900));
     }
 }
